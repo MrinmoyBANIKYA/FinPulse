@@ -19,3 +19,4 @@ nltk>=3.8.1
 newspaper3k>=0.2.8
 lxml>=4.9.0
 lxml_html_clean
+matplotlib>=3.7.0

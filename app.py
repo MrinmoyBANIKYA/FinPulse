@@ -201,16 +201,29 @@ def main():
 
         if not anomalies.empty:
             display_df = anomalies[["close", "return", "anomaly_score"]].copy()
-            display_df = display_df.reset_index().rename(columns={"Date": "date"})
-            
-            styler = display_df.style.background_gradient(
-                subset=["anomaly_score"], cmap="Reds_r"
-            ).format({
+            display_df = display_df.reset_index()
+            # Rename Date index column if present
+            if "Date" in display_df.columns:
+                display_df = display_df.rename(columns={"Date": "date"})
+            elif "index" in display_df.columns:
+                display_df = display_df.rename(columns={"index": "date"})
+
+            def color_score(val):
+                """Color anomaly_score red — no matplotlib needed."""
+                try:
+                    norm = min(max((val + 0.5) / 0.5, 0), 1)  # map roughly -0.5..0 → 0..1
+                    r = int(255)
+                    g = int(norm * 100)
+                    return f"background-color: rgba({r},{g},{g},0.35); color: #f5f3ee"
+                except Exception:
+                    return ""
+
+            styler = display_df.style.map(color_score, subset=["anomaly_score"]).format({
                 "close": "${:.2f}",
                 "return": "{:.2%}",
                 "anomaly_score": "{:.4f}"
             })
-            
+
             st.dataframe(styler, use_container_width=True, hide_index=True)
 
     # ── Tab 3: Portfolio ───────────────────────────────────────────────────
