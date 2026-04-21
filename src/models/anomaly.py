@@ -133,8 +133,8 @@ class FinancialAnomalyDetector:
         labels = self.model.fit_predict(feature_matrix)
         scores = self.model.score_samples(feature_matrix)
 
-        df["anomaly"] = labels
-        df["anomaly_score"] = scores
+        features["anomaly"] = labels
+        features["anomaly_score"] = scores
 
         n_anomalies = int((labels == -1).sum())
         logger.info(
@@ -144,7 +144,7 @@ class FinancialAnomalyDetector:
             100.0 * n_anomalies / len(df) if len(df) else 0.0,
         )
 
-        return df
+        return features
 
     def get_anomaly_dates(self, df: pd.DataFrame) -> pd.DatetimeIndex:
         """Return the index values (dates) of all rows flagged as anomalies.
