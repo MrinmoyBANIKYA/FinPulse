@@ -144,6 +144,9 @@ def main():
         st.error("Failed to retrieve market data. Check inputs.")
         return
 
+    # Filter out tickers that failed to fetch to avoid KeyErrors downstream
+    selected_tickers = [t for t in selected_tickers if t in data]
+
     # ── Tab 1: Price & Indicators ──────────────────────────────────────────
     with tab_price:
         for ticker in selected_tickers:
