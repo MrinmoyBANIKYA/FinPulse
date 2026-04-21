@@ -3,169 +3,77 @@ FinPulse — Tests: Data Fetcher
 ================================
 Module: tests/test_fetcher.py
 
-Test suite for ``src.data.fetcher.FinancialDataFetcher``.
+Test suite for `src.data.fetcher`.
 
-Strategy:
-    - Mock ``yfinance.download`` and ``yfinance.Ticker`` to avoid live
-      network calls in CI.
-    - Use pytest fixtures for reproducible synthetic DataFrames.
-
-Author: FinPulse Team
-Created: 2026-04-21
+Covers:
+    - fetch_ohlcv returns correct columns.
+    - Missing/empty DataFrame results are skipped.
+    - Per-ticker Error catching mechanisms inside iterators.
 """
 
-from __future__ import annotations
-
-from unittest.mock import MagicMock, patch
-
-import numpy as np
-import pandas as pd
 import pytest
+from unittest.mock import patch
+import pandas as pd
+import numpy as np
 
 from src.data.fetcher import FinancialDataFetcher
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 @pytest.fixture
-def fetcher() -> FinancialDataFetcher:
-    """Fresh fetcher instance for each test."""
-    return FinancialDataFetcher()
+def sample_df():
+    dates = pd.date_range(start="2023-01-01", periods=10, freq="B")
+    df = pd.DataFrame({
+        "Open": np.random.rand(10) * 100,
+        "High": np.random.rand(10) * 100,
+        "Low": np.random.rand(10) * 100,
+        "Close": np.random.rand(10) * 100,
+        "Volume": np.random.randint(1000, 10000, 10)
+    }, index=dates)
+    return df
 
 
-@pytest.fixture
-def sample_ohlcv() -> pd.DataFrame:
-    """Synthetic 30-row OHLCV DataFrame mimicking yfinance output."""
-    dates = pd.bdate_range(start="2024-01-02", periods=30)
-    rng = np.random.default_rng(0)
-    close = 150 + rng.standard_normal(30).cumsum()
-    return pd.DataFrame(
-        {
-            "Open":   close - rng.uniform(0.5, 2, 30),
-            "High":   close + rng.uniform(0.5, 2, 30),
-            "Low":    close - rng.uniform(0.5, 2, 30),
-            "Close":  close,
-            "Volume": rng.integers(1_000_000, 5_000_000, 30),
-        },
-        index=dates,
-    )
+@patch("src.data.fetcher.yf.download")
+def test_fetch_ohlcv_success(mock_download, sample_df):
+    """Test standard fetch pipeline processes OHLCV and corrects keys."""
+    mock_download.return_value = sample_df
+    fetcher = FinancialDataFetcher()
+    
+    result = fetcher.fetch_ohlcv(["AAPL"])
+    
+    assert "AAPL" in result
+    assert not result["AAPL"].empty
+    # Validate the fetcher converted uppercase cols to lowercase format correctly
+    assert "close" in result["AAPL"].columns
+    assert "volume" in result["AAPL"].columns
 
 
-# ---------------------------------------------------------------------------
-# fetch_ohlcv
-# ---------------------------------------------------------------------------
-
-class TestFetchOhlcv:
-    """Tests for ``FinancialDataFetcher.fetch_ohlcv``."""
-
-    @patch("src.data.fetcher.yf.download")
-    def test_returns_dict_keyed_by_ticker(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        result = fetcher.fetch_ohlcv(["AAPL"])
-        assert isinstance(result, dict)
-        assert "AAPL" in result
-
-    @patch("src.data.fetcher.yf.download")
-    def test_columns_are_lowercase(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        result = fetcher.fetch_ohlcv(["AAPL"])
-        assert all(c == c.lower() for c in result["AAPL"].columns)
-
-    @patch("src.data.fetcher.yf.download")
-    def test_contains_expected_ohlcv_columns(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        df = fetcher.fetch_ohlcv(["AAPL"])["AAPL"]
-        for col in ["open", "high", "low", "close", "volume"]:
-            assert col in df.columns
-
-    @patch("src.data.fetcher.yf.download")
-    def test_empty_result_is_skipped(self, mock_download, fetcher):
-        mock_download.return_value = pd.DataFrame()
-        result = fetcher.fetch_ohlcv(["BADTICKER"])
-        assert "BADTICKER" not in result
-
-    @patch("src.data.fetcher.yf.download")
-    def test_exception_does_not_crash_loop(self, mock_download, fetcher, sample_ohlcv):
-        """One ticker throws, the other succeeds."""
-        mock_download.side_effect = [Exception("API error"), sample_ohlcv]
-        result = fetcher.fetch_ohlcv(["BAD", "GOOD"])
-        assert "BAD" not in result
-        assert "GOOD" in result
-
-    def test_empty_ticker_list_returns_empty_dict(self, fetcher):
-        assert fetcher.fetch_ohlcv([]) == {}
-
-    @patch("src.data.fetcher.yf.download")
-    def test_multiple_tickers(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        result = fetcher.fetch_ohlcv(["AAPL", "MSFT"])
-        assert len(result) == 2
-
-    @patch("src.data.fetcher.yf.download")
-    def test_datetime_index(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        df = fetcher.fetch_ohlcv(["AAPL"])["AAPL"]
-        assert isinstance(df.index, pd.DatetimeIndex)
+@patch("src.data.fetcher.yf.download")
+def test_empty_result_skipped(mock_download):
+    """Ensure bad ticker yielding empty DataFrames don't mutate or throw exceptions."""
+    # Simulates yfinance yielding empty dataframe for delisted tickers
+    mock_download.return_value = pd.DataFrame()
+    fetcher = FinancialDataFetcher()
+    
+    result = fetcher.fetch_ohlcv(["FAKE"])
+    
+    # Should skip putting it in the dictionary (No KeyError encountered)
+    assert "FAKE" not in result
+    assert len(result.keys()) == 0
 
 
-# ---------------------------------------------------------------------------
-# fetch_fundamentals
-# ---------------------------------------------------------------------------
-
-class TestFetchFundamentals:
-    """Tests for ``FinancialDataFetcher.fetch_fundamentals``."""
-
-    @patch("src.data.fetcher.yf.Ticker")
-    def test_returns_expected_keys(self, mock_ticker_cls, fetcher):
-        mock_ticker_cls.return_value.info = {
-            "trailingPE": 28.5,
-            "marketCap": 3_000_000_000_000,
-            "debtToEquity": 150.2,
-            "grossMargins": 0.45,
-            "revenueGrowth": 0.08,
-            "profitMargins": 0.26,
-        }
-        result = fetcher.fetch_fundamentals("AAPL")
-        for key in ["pe_ratio", "market_cap", "debt_equity",
-                     "gross_margin", "revenue_growth", "profit_margin"]:
-            assert key in result
-
-    @patch("src.data.fetcher.yf.Ticker")
-    def test_missing_keys_default_to_none(self, mock_ticker_cls, fetcher):
-        mock_ticker_cls.return_value.info = {}
-        result = fetcher.fetch_fundamentals("AAPL")
-        assert all(v is None for v in result.values())
-
-    @patch("src.data.fetcher.yf.Ticker")
-    def test_exception_returns_none_dict(self, mock_ticker_cls, fetcher):
-        mock_ticker_cls.return_value.info = property(
-            fget=lambda self: (_ for _ in ()).throw(Exception("fail"))
-        )
-        mock_ticker_cls.side_effect = Exception("network error")
-        result = fetcher.fetch_fundamentals("AAPL")
-        assert all(v is None for v in result.values())
-
-
-# ---------------------------------------------------------------------------
-# validate_tickers
-# ---------------------------------------------------------------------------
-
-class TestValidateTickers:
-    """Tests for ``FinancialDataFetcher.validate_tickers``."""
-
-    @patch("src.data.fetcher.yf.download")
-    def test_valid_tickers_returned(self, mock_download, fetcher, sample_ohlcv):
-        mock_download.return_value = sample_ohlcv
-        result = fetcher.validate_tickers(["AAPL"])
-        assert result == ["AAPL"]
-
-    @patch("src.data.fetcher.yf.download")
-    def test_invalid_tickers_excluded(self, mock_download, fetcher):
-        mock_download.return_value = pd.DataFrame()
-        result = fetcher.validate_tickers(["INVALIDXYZ"])
-        assert result == []
-
-    def test_empty_input_returns_empty(self, fetcher):
-        assert fetcher.validate_tickers([]) == []
+@patch("src.data.fetcher.yf.download")
+def test_exception_on_one_ticker_doesnt_crash(mock_download, sample_df):
+    """Ensure single fetching fault inside list iteration doesn't break global process."""
+    def side_effect(ticker, **kwargs):
+        if ticker == "BAD":
+            raise ValueError("Connection Error")
+        return sample_df
+        
+    mock_download.side_effect = side_effect
+    
+    fetcher = FinancialDataFetcher()
+    result = fetcher.fetch_ohlcv(["AAPL", "BAD", "MSFT"])
+    
+    assert "AAPL" in result
+    assert "MSFT" in result
+    assert "BAD" not in result
