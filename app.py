@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import io
 import logging
+from datetime import datetime
 
+import pytz
+import yfinance as yf
 import feedparser
 import nltk
 import pandas as pd
@@ -37,6 +40,185 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Global CSS injection
+# ---------------------------------------------------------------------------
+def inject_global_css() -> None:
+    """Inject Google Fonts and full CSS overrides into the Streamlit app."""
+    st.markdown(
+        """
+        <style>
+        /* ── Google Fonts ─────────────────────────────────────────────────── */
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@700;800&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;600&display=swap');
+
+        /* ── App shell ────────────────────────────────────────────────────── */
+        .stApp {
+            background: #060606;
+            color: #f5f3ee;
+            font-family: 'Instrument Sans', sans-serif;
+        }
+
+        /* ── Sidebar ──────────────────────────────────────────────────────── */
+        [data-testid="stSidebar"] {
+            background: #0d0d0d;
+            border-right: 1px solid rgba(255,255,255,0.06);
+        }
+        [data-testid="stSidebar"] * {
+            color: #f5f3ee;
+        }
+
+        /* ── Tabs ─────────────────────────────────────────────────────────── */
+        .stTabs [data-baseweb="tab-list"] {
+            background: transparent;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+            gap: 0;
+        }
+        .stTabs [data-baseweb="tab"] {
+            background: transparent;
+            color: #888;
+            font-family: 'DM Mono', monospace;
+            font-size: 11px;
+            letter-spacing: 0.15em;
+            padding: 16px 24px;
+            border-radius: 0;
+            border-bottom: 2px solid transparent;
+        }
+        .stTabs [aria-selected="true"] {
+            color: #00ff87;
+            border-bottom: 2px solid #00ff87;
+            background: transparent;
+        }
+
+        /* ── Metrics ──────────────────────────────────────────────────────── */
+        .stMetric {
+            background: #111;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .stMetric label {
+            font-family: 'DM Mono', monospace;
+            font-size: 10px;
+            letter-spacing: 0.2em;
+            color: #666;
+            text-transform: uppercase;
+        }
+        [data-testid="stMetricValue"] {
+            font-family: 'Syne', sans-serif;
+            font-size: 32px;
+            font-weight: 800;
+            color: #f5f3ee;
+            letter-spacing: -1px;
+        }
+        [data-testid="stMetricDelta"] {
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+        }
+
+        /* ── Buttons ──────────────────────────────────────────────────────── */
+        .stButton > button {
+            background: transparent;
+            border: 1px solid rgba(255,255,255,0.15);
+            color: #f5f3ee;
+            font-family: 'DM Mono', monospace;
+            font-size: 12px;
+            letter-spacing: 0.1em;
+            border-radius: 100px;
+            padding: 12px 28px;
+            transition: all 0.2s;
+        }
+        .stButton > button:hover {
+            background: rgba(0,255,135,0.08);
+            border-color: #00ff87;
+            color: #00ff87;
+        }
+        .stButton > button[kind="primary"] {
+            background: #00ff87;
+            color: #060606;
+            border: none;
+            font-weight: 600;
+        }
+
+        /* ── Inputs ───────────────────────────────────────────────────────── */
+        .stSelectbox > div,
+        .stMultiSelect > div {
+            background: #111;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+        }
+        .stSlider [data-baseweb="slider"] div[role="slider"] {
+            background: #00ff87;
+        }
+
+        /* ── Layout helpers ───────────────────────────────────────────────── */
+        div[data-testid="stHorizontalBlock"] {
+            gap: 16px;
+        }
+
+        /* ── Headings ─────────────────────────────────────────────────────── */
+        h1, h2, h3 {
+            font-family: 'Syne', sans-serif;
+            font-weight: 800;
+            letter-spacing: -1px;
+        }
+
+        /* ── DataFrames ───────────────────────────────────────────────────── */
+        [data-testid="stDataFrame"] {
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        /* ── FinPulse sidebar logo ────────────────────────────────────────── */
+        #finpulse-logo {
+            font-family: 'Syne', sans-serif;
+            font-size: 22px;
+            font-weight: 800;
+            color: #f5f3ee;
+            letter-spacing: -1px;
+            margin-bottom: 32px;
+            padding: 0 0 24px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        #finpulse-logo span {
+            color: #00ff87;
+        }
+
+        /* ── Live-ticker pulse dot ────────────────────────────────────────── */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.4; transform: scale(0.8); }
+        }
+        .live-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ff87;
+            border-radius: 50%;
+            display: inline-block;
+            animation: pulse 1.5s infinite;
+            margin-right: 8px;
+        }
+
+        /* ── Live Ticker ──────────────────────────────────────────────────── */
+        .ticker-outer { background:#0a0a0a; border-bottom:1px solid rgba(255,255,255,0.06); overflow:hidden; padding:10px 0; margin-bottom:0; }
+        .ticker-inner { display:flex; align-items:center; overflow:hidden; }
+        .ticker-track { display:flex; gap:32px; white-space:nowrap; animation:tickerScroll 40s linear infinite; }
+        @keyframes tickerScroll { from{transform:translateX(0)} to{transform:translateX(-50%)} }
+        .ticker-item { display:inline-flex; align-items:center; gap:8px; padding:0 16px; border-right:1px solid rgba(255,255,255,0.06); }
+        .ticker-symbol { font-family:'DM Mono',monospace; font-size:11px; font-weight:500; color:#888; letter-spacing:0.1em; }
+        .ticker-price { font-family:'DM Mono',monospace; font-size:12px; color:#f5f3ee; }
+        .ticker-change { font-family:'DM Mono',monospace; font-size:11px; }
+        .ticker-change.up { color:#00ff87; }
+        .ticker-change.down { color:#ff3366; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Page config — must be the first Streamlit call
 # ---------------------------------------------------------------------------
@@ -45,6 +227,7 @@ st.set_page_config(
     page_icon="📡",
     layout="wide",
 )
+inject_global_css()
 
 # ---------------------------------------------------------------------------
 # One-time setup
@@ -95,25 +278,186 @@ def _safe_get(row: pd.Series, key: str, default: float = 0.0) -> float:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+def render_clock(placeholder) -> None:
+    ny_tz = pytz.timezone('America/New_York')
+    now = datetime.now(ny_tz)
+    
+    is_weekday = now.weekday() < 5
+    market_open = False
+    if is_weekday:
+        if now.hour > 9 or (now.hour == 9 and now.minute >= 30):
+            if now.hour < 16:
+                market_open = True
+                
+    time_str = now.strftime('%H:%M:%S ET')
+    
+    if market_open:
+        badge = '<span style="color:#00ff87;font-size:11px;letter-spacing:0.1em;"><span class="live-dot"></span>MARKET OPEN</span>'
+    else:
+        badge = '<span style="color:#ff3b69;font-size:11px;letter-spacing:0.1em;">● MARKET CLOSED</span>'
+        
+    html = f"""
+    <div>
+        <div style="font-family:'DM Mono',monospace;font-size:24px;color:#f5f3ee;font-weight:500;">{time_str}</div>
+        <div style="margin-top:4px;">{badge}</div>
+    </div>
+    """
+    placeholder.markdown(html, unsafe_allow_html=True)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_live_quotes(tickers: list) -> dict:
+    try:
+        data = yf.download(tickers, period='2d', interval='1d', auto_adjust=True, progress=False)
+        result = {}
+        if data.empty:
+            return result
+            
+        if isinstance(data.columns, pd.MultiIndex):
+            close_prices = data['Close'] if 'Close' in data.columns else data.xs('Close', level=0, axis=1)
+        else:
+            close_prices = pd.DataFrame(data['Close']).rename(columns={'Close': tickers[0]})
+            
+        for t in tickers:
+            try:
+                prices = close_prices[t].dropna()
+                if len(prices) >= 2:
+                    last_price = float(prices.iloc[-1])
+                    prev_price = float(prices.iloc[-2])
+                    change_pct = ((last_price - prev_price) / prev_price) * 100
+                    result[t] = {
+                        'price': last_price,
+                        'change': change_pct,
+                        'up': change_pct >= 0
+                    }
+                elif len(prices) == 1:
+                    last_price = float(prices.iloc[-1])
+                    result[t] = {
+                        'price': last_price,
+                        'change': 0.0,
+                        'up': True
+                    }
+            except Exception:
+                continue
+        return result
+    except Exception as e:
+        logger.exception("Failed to fetch live quotes")
+        return {}
+
+
 def main() -> None:
     # ── Sidebar ──────────────────────────────────────────────────────────────
-    st.sidebar.title("📡 FinPulse")
+    with st.sidebar:
+        # 1. LOGO BLOCK
+        st.markdown(
+            """
+            <div id="finpulse-logo">Fin<span>Pulse</span></div>
+            <div style="font-family:'DM Mono',monospace;font-size:10px;color:#444;letter-spacing:0.15em;margin-top:-20px;margin-bottom:24px;">YC-BACKED · FINAI</div>
+            """,
+            unsafe_allow_html=True
+        )
 
-    ALL_TICKERS = ["AAPL", "MSFT", "GOOGL", "NVDA", "SPY"]
-    selected_tickers: list[str] = st.sidebar.multiselect(
-        "Tickers", ALL_TICKERS, default=ALL_TICKERS
-    )
+        # 2. LIVE CLOCK
+        clock_placeholder = st.empty()
+        
+        # 3. SECTION DIVIDER
+        st.markdown('<hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:16px 0">', unsafe_allow_html=True)
 
-    period       = st.sidebar.selectbox("Period",   ["1y", "2y", "5y"], index=1)
-    interval     = st.sidebar.selectbox("Interval", ["1d", "1wk"],      index=0)
-    contamination = st.sidebar.slider(
-        "Anomaly Contamination", min_value=0.01, max_value=0.15,
-        value=0.05, step=0.01
-    )
+        # 4. TICKER SEARCH
+        TICKER_LOOKUP = {
+            'Apple': 'AAPL', 'Microsoft': 'MSFT', 'Google': 'GOOGL', 'NVIDIA': 'NVDA',
+            'Tesla': 'TSLA', 'Amazon': 'AMZN', 'Meta': 'META', 'S&P 500': 'SPY',
+            'Nasdaq 100': 'QQQ', 'Berkshire': 'BRK-B', 'JPMorgan': 'JPM', 'Visa': 'V',
+            'Mastercard': 'MA', 'Eli Lilly': 'LLY', 'ASML': 'ASML', 'Taiwan Semi': 'TSM'
+        }
+        
+        search_query = st.text_input("Search ticker or company...", key="ticker_search", placeholder="Search ticker or company...")
+        
+        filtered_tickers = []
+        for name, ticker in TICKER_LOOKUP.items():
+            if search_query.lower() in name.lower() or search_query.lower() in ticker.lower():
+                filtered_tickers.append(ticker)
+        
+        default_selected = [t for t in ['AAPL', 'MSFT', 'NVDA', 'SPY'] if t in filtered_tickers]
+        
+        selected_tickers = st.multiselect(
+            "Select Assets", 
+            options=filtered_tickers,
+            default=default_selected,
+            label_visibility="collapsed"
+        )
+        
+        st.caption(f"{len(selected_tickers)} assets selected")
+        
+        # 5. SECTION DIVIDER
+        st.markdown('<hr style="border:none;border-top:1px solid rgba(255,255,255,0.06);margin:16px 0">', unsafe_allow_html=True)
 
-    run_btn = st.sidebar.button("🚀 Run Analysis", type="primary")
-    st.sidebar.markdown("---")
-    st.sidebar.caption("⚠️ For research only. Not financial advice.")
+        # 6. ANALYSIS CONTROLS
+        period_options = {
+            '1 Month': '1mo', '3 Months': '3mo', '6 Months': '6mo', 
+            '1 Year': '1y', '2 Years': '2y', '5 Years': '5y'
+        }
+        period_label = st.selectbox(
+            "TIME PERIOD", 
+            options=list(period_options.keys()), 
+            index=3
+        )
+        period = period_options[period_label]
+        
+        interval_options = {'Daily': '1d', 'Weekly': '1wk'}
+        interval_label = st.selectbox(
+            "INTERVAL",
+            options=list(interval_options.keys()),
+            index=0
+        )
+        interval = interval_options[interval_label]
+        
+        contamination_pct = st.slider(
+            "ANOMALY SENSITIVITY",
+            min_value=1, max_value=15, value=5, format="%d%%"
+        )
+        contamination = contamination_pct / 100.0
+
+        # 7. RUN BUTTON
+        run_btn = st.button("⚡ RUN ANALYSIS", type="primary", use_container_width=True)
+
+        # 8. DISCLAIMER
+        st.markdown(
+            '<div style="font-size:10px;color:#333;margin-top:32px;font-family:\'DM Mono\',monospace">NOT FINANCIAL ADVICE<br>FOR RESEARCH ONLY</div>',
+            unsafe_allow_html=True
+        )
+        
+    render_clock(clock_placeholder)
+
+    # ── Live Ticker ──────────────────────────────────────────────────────────
+    st.markdown('<div style="display:flex;align-items:center;gap:8px;padding:16px 0 0;font-family:\'DM Mono\',monospace;font-size:10px;color:#444;letter-spacing:0.2em"><span class="live-dot"></span>MARKET DATA · REFRESHES EVERY 5 MIN</div>', unsafe_allow_html=True)
+    
+    ticker_list = ['AAPL','MSFT','GOOGL','NVDA','SPY','QQQ','^GSPC','^DJI','^IXIC']
+    quotes = fetch_live_quotes(ticker_list)
+    
+    if quotes:
+        ticker_html_parts = []
+        for t, info in quotes.items():
+            price_str = f"${info['price']:.2f}" if not t.startswith('^') else f"{info['price']:.2f}"
+            change_str = f"{info['change']:+.2f}%"
+            css_class = "up" if info['up'] else "down"
+            
+            item_html = f"""<span class="ticker-item"><span class="ticker-symbol">{t}</span><span class="ticker-price">{price_str}</span><span class="ticker-change {css_class}">{change_str}</span></span>"""
+            ticker_html_parts.append(item_html)
+            
+        ticker_items = "".join(ticker_html_parts)
+        
+        full_ticker_html = f"""
+        <div class="ticker-outer">
+          <div class="ticker-inner">
+            <div class="ticker-track">
+              {ticker_items}{ticker_items}
+            </div>
+          </div>
+        </div>
+        """
+        st.markdown(full_ticker_html, unsafe_allow_html=True)
+        st.markdown("<div style='margin-bottom: 24px;'></div>", unsafe_allow_html=True)
 
     # ── Tabs ─────────────────────────────────────────────────────────────────
     tab_price, tab_anomaly, tab_portfolio, tab_sentiment, tab_export = st.tabs([

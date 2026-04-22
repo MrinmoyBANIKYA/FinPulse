@@ -20,3 +20,4 @@ newspaper3k>=0.2.8
 lxml>=4.9.0
 lxml_html_clean
 matplotlib>=3.7.0
+pytz>=2023.3
