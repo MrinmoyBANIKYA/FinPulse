@@ -116,8 +116,8 @@ class ChartBuilder:
             ))
             
             # Fills
-            fig.add_hrect(y0=70, y1=100, fillcolor='rgba(0,255,135,0.1)', borderwidth=0)
-            fig.add_hrect(y0=0, y1=30, fillcolor='rgba(255,51,82,0.1)', borderwidth=0)
+            fig.add_hrect(y0=70, y1=100, fillcolor='rgba(0,255,135,0.1)', line_width=0)
+            fig.add_hrect(y0=0, y1=30, fillcolor='rgba(255,51,82,0.1)', line_width=0)
             
             # Reference Lines
             fig.add_hline(y=70, line=dict(color=CHART_THEME['accent'], dash='dash', width=1))
