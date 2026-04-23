@@ -18,8 +18,6 @@ from datetime import datetime
 
 import pytz
 import yfinance as yf
-import feedparser
-import nltk
 import pandas as pd
 import json
 import plotly.graph_objects as go
@@ -233,12 +231,7 @@ inject_global_css()
 # ---------------------------------------------------------------------------
 # One-time setup
 # ---------------------------------------------------------------------------
-@st.cache_resource
-def setup_vader():
-    """Initialise VADER once per session."""
-    nltk.download("vader_lexicon", quiet=True)
-    from nltk.sentiment.vader import SentimentIntensityAnalyzer
-    return SentimentIntensityAnalyzer()
+from src.models.sentiment import fetch_news_rss, score_headlines
 
 
 # ---------------------------------------------------------------------------
@@ -815,88 +808,106 @@ def main() -> None:
     # =========================================================================
     # Tab 4 — Sentiment
     # =========================================================================
+    # =========================================================================
+    # Tab 4 — Sentiment
+    # =========================================================================
     with tab_sentiment:
-        st.markdown("### 🧠 News Sentiment Analysis")
-        st.warning("Sentiment is experimental. Not financial advice.")
+        st.markdown("### 🧠 News Sentiment Intelligence")
+        
+        with st.spinner("Analyzing global market sentiment..."):
+            all_ticker_data = []
+            
+            for ticker in valid_tickers:
+                try:
+                    # Fetch long name for better search results
+                    company_name = yf.Ticker(ticker).info.get('longName', ticker)
+                except:
+                    company_name = ticker
+                
+                headlines = fetch_news_rss(ticker, company_name)
+                if not headlines:
+                    continue
+                
+                scored_headlines = score_headlines(headlines)
+                for h in scored_headlines:
+                    h['Ticker'] = ticker
+                    # Parse date for trend analysis
+                    try:
+                        dt = pd.to_datetime(h['published'])
+                        h['Date'] = dt.date()
+                    except:
+                        h['Date'] = None
+                
+                all_ticker_data.extend(scored_headlines)
 
-        sia = setup_vader()
-        all_sentiments: list[dict] = []
-
-        for ticker in valid_tickers:
-            st.markdown(f"#### {ticker}")
-            url = (
-                f"https://news.google.com/rss/search"
-                f"?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+        if not all_ticker_data:
+            st.warning("No recent news headlines found for the selected assets.", icon="🗞️")
+        else:
+            df_s = pd.DataFrame(all_ticker_data)
+            
+            # 1. Headline Table
+            st.markdown("#### Recent Headlines")
+            display_cols = ["Ticker", "title", "source", "sentiment_label"]
+            st.dataframe(
+                df_s[display_cols].rename(columns={
+                    "title": "Headline", 
+                    "source": "Source", 
+                    "sentiment_label": "Sentiment"
+                }),
+                use_container_width=True, hide_index=True
             )
-
-            try:
-                feed    = feedparser.parse(url)
-                entries = feed.entries[:5]
-            except Exception as e:
-                st.error(f"Failed to fetch news for {ticker}: {e}")
-                continue
-
-            if not entries:
-                st.info(f"No recent headlines found for {ticker}.")
-                continue
-
-            rows: list[dict] = []
-            for entry in entries:
-                title = entry.get("title", "")
-                date  = entry.get("published", "")
-                try:
-                    source = entry.source.get("title", "Google News")
-                except AttributeError:
-                    source = "Google News"
-
-                # Try to fetch fuller headline via newspaper3k (best-effort)
-                try:
-                    from newspaper import Article  # local import — safe fallback
-                    art = Article(entry.link, fetch_images=False)
-                    art.download()
-                    art.parse()
-                    if art.title:
-                        title = art.title
-                except Exception:
-                    pass  # Fall back to RSS title
-
-                compound = sia.polarity_scores(title)["compound"]
-                label    = "Positive" if compound >= 0.05 else ("Negative" if compound <= -0.05 else "Neutral")
-
-                rows.append({
-                    "Headline":        title,
-                    "Source":          source,
-                    "Date":            date,
-                    "Sentiment Score": compound,
-                    "Label":           label,
-                })
-                all_sentiments.append({"Ticker": ticker, "Label": label})
-
-            if rows:
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        if all_sentiments:
-            st.markdown("#### Aggregated Sentiment Distribution")
-            agg    = pd.DataFrame(all_sentiments)
-            counts = agg.groupby(["Ticker", "Label"]).size().reset_index(name="Count")
-
-            fig    = go.Figure()
-            colors = {"Positive": "#00ff87", "Neutral": "#f5f3ee", "Negative": "#ff3b69"}
-            for label in ["Positive", "Neutral", "Negative"]:
-                sub = counts[counts["Label"] == label]
-                if not sub.empty:
-                    fig.add_trace(go.Bar(
-                        x=sub["Ticker"], y=sub["Count"],
-                        name=label, marker_color=colors[label],
+            
+            # 2. Aggregated Metrics & Charts
+            c1, c2 = st.columns(2)
+            
+            with c1:
+                st.markdown("#### Average Sentiment by Asset")
+                avg_sent = df_s.groupby("Ticker")["sentiment_score"].mean().reset_index()
+                colors = ["#00ff87" if x >= 0 else "#ff3366" for x in avg_sent["sentiment_score"]]
+                
+                fig_bar = go.Figure(go.Bar(
+                    x=avg_sent["Ticker"], y=avg_sent["sentiment_score"],
+                    marker_color=colors,
+                    hovertemplate="Ticker: %{x}<br>Avg Score: %{y:.2f}<extra></extra>"
+                ))
+                fig_bar.update_layout(
+                    template="plotly_dark",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                    yaxis=dict(title="Sentiment Score (-1 to 1)", range=[-1.1, 1.1]),
+                    margin=dict(l=0, r=0, t=20, b=0)
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+            
+            with c2:
+                st.markdown("#### Sentiment Trend")
+                trend_df = df_s.dropna(subset=['Date'])
+                if not trend_df.empty and len(trend_df['Date'].unique()) >= 2:
+                    daily_trend = trend_df.groupby("Date")["sentiment_score"].mean().reset_index()
+                    fig_trend = go.Figure(go.Scatter(
+                        x=daily_trend["Date"], y=daily_trend["sentiment_score"],
+                        mode='lines+markers',
+                        line=dict(color="#4f8cff", width=2),
+                        marker=dict(size=8, color="#00ff87"),
+                        fill='tozeroy',
+                        fillcolor='rgba(79,140,255,0.1)'
                     ))
+                    fig_trend.update_layout(
+                        template="plotly_dark",
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        yaxis=dict(title="Avg Sentiment", range=[-1.1, 1.1]),
+                        margin=dict(l=0, r=0, t=20, b=0)
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.info("Insufficient historical news data for trend analysis.")
 
-            fig.update_layout(
-                barmode="stack", template="plotly_dark",
-                paper_bgcolor="rgba(0,0,0,0)",
-                plot_bgcolor="rgba(0,0,0,0)",
-                yaxis_title="Headlines",
-            )
-            st.plotly_chart(fig, use_container_width=True)
+        st.info(
+            "**Disclaimer:** Sentiment analysis is powered by FinBERT AI and keywords. "
+            "Scores are for research purposes only and do not constitute financial advice.",
+            icon="⚖️"
+        )
 
     # =========================================================================
     # Tab 5 — Export
